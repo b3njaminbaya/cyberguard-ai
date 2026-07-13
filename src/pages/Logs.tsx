@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { MetricCard } from "@/components/MetricCard"
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts"
 import { FileText, AlertCircle, TrendingUp, Search, Filter, Download, RefreshCw, Calendar } from "lucide-react"
+import { DemoDataBadge } from "@/components/DemoDataBadge"
 
 const mockLogTrends = [
   { time: "00:00", errors: 12, warnings: 45, info: 234, debug: 567 },
@@ -115,6 +116,7 @@ export default function Logs() {
         <div>
           <h1 className="text-3xl font-bold text-foreground">Log Analytics</h1>
           <p className="text-muted-foreground">Centralized log analysis and anomaly detection</p>
+          <div className="mt-2"><DemoDataBadge /></div>
         </div>
         <div className="flex items-center gap-4">
           <Select value={timeRange} onValueChange={setTimeRange}>

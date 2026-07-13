@@ -12,10 +12,29 @@ dist
 dist-ssr
 *.local
 
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python backend
+backend/venv
+backend/venv*
+backend/__pycache__
+backend/**/__pycache__
+*.pyc
+.pytest_cache
+backend/**/.pytest_cache
+
+# Downloaded datasets & trained model artifacts (fetched/generated via scripts, not committed)
+backend/data/*.csv
+backend/detection/*.joblib
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
+.claude/
 .DS_Store
 *.suo
 *.ntvs*

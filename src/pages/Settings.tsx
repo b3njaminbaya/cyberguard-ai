@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,43 +10,247 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "@/hooks/use-toast"
-import { Settings as SettingsIcon, Bell, Mail, Webhook, Shield, Database, Cpu, Network, Save, TestTube2, AlertTriangle } from "lucide-react"
+import { Settings as SettingsIcon, Bell, Mail, Webhook, Shield, Database, Cpu, TestTube2, AlertTriangle, Lock } from "lucide-react"
+import { DemoDataBadge } from "@/components/DemoDataBadge"
+import { LoadingState, ErrorState } from "@/components/QueryState"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { api, ApiError, type NotificationSettingsInput } from "@/lib/api"
+import { useAuth } from "@/lib/AuthContext"
+
+function NotificationsTab() {
+  const { user } = useAuth()
+  const isAdmin = user?.role === "Admin"
+  const queryClient = useQueryClient()
+  const { data, isPending, isError, error } = useQuery({
+    queryKey: ["notification-settings"],
+    queryFn: api.notificationSettings,
+  })
+  const [form, setForm] = useState<NotificationSettingsInput | null>(null)
+
+  useEffect(() => {
+    if (data) setForm(data)
+  }, [data])
+
+  const save = useMutation({
+    mutationFn: (payload: NotificationSettingsInput) => api.saveNotificationSettings(payload),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(["notification-settings"], saved)
+      toast({ title: "Settings saved", description: "Notification configuration updated." })
+    },
+    onError: (err: ApiError) => toast({ title: "Save failed", description: err.message, variant: "destructive" }),
+  })
+
+  const runTest = useMutation({
+    mutationFn: (channel: "slack" | "email" | "webhook") =>
+      channel === "slack" ? api.testSlack() : channel === "email" ? api.testEmail() : api.testWebhook(),
+    onSuccess: (_res, channel) =>
+      toast({ title: "Test sent", description: `Check your ${channel} destination — a real message was just sent.` }),
+    onError: (err: ApiError) => toast({ title: "Test failed", description: err.message, variant: "destructive" }),
+  })
+
+  if (isPending || !form) return <LoadingState label="Loading notification settings…" />
+  if (isError) return <ErrorState message={(error as Error).message} />
+
+  const set = <K extends keyof NotificationSettingsInput>(key: K, value: NotificationSettingsInput[K]) =>
+    setForm((f) => (f ? { ...f, [key]: value } : f))
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <Bell className="h-5 w-5" />
+            Alert Notifications
+          </span>
+          <Button size="sm" disabled={!isAdmin || save.isPending} onClick={() => save.mutate(form)}>
+            {save.isPending ? "Saving…" : "Save Changes"}
+          </Button>
+        </CardTitle>
+        <CardDescription>
+          Real delivery — Slack via Incoming Webhook, email via SMTP, and a generic signed webhook. Saving and
+          testing requires the Admin role.
+        </CardDescription>
+        {!isAdmin && (
+          <div className="flex items-center gap-2 text-sm text-warning bg-warning/10 border border-warning/30 rounded-md px-3 py-2 mt-2">
+            <Lock className="h-4 w-4 shrink-0" />
+            You're signed in as "{user?.role ?? "unknown"}" — an Admin needs to promote your account before you can change these settings.
+          </div>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="space-y-0.5">
+            <Label className="text-base">Enable Notifications</Label>
+            <p className="text-sm text-muted-foreground">Master toggle for all alert notifications</p>
+          </div>
+          <Switch
+            disabled={!isAdmin}
+            checked={form.notifications_enabled}
+            onCheckedChange={(v) => set("notifications_enabled", v)}
+          />
+        </div>
+
+        <Separator />
+
+        {/* Email Notifications */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label className="text-base flex items-center gap-2">
+                <Mail className="h-4 w-4" />
+                Email Alerts
+              </Label>
+              <p className="text-sm text-muted-foreground">Sent via the SMTP account configured on the backend</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={!isAdmin || runTest.isPending} onClick={() => runTest.mutate("email")}>
+                <TestTube2 className="h-3 w-3 mr-1" />
+                Test
+              </Button>
+              <Switch disabled={!isAdmin} checked={form.email_enabled} onCheckedChange={(v) => set("email_enabled", v)} />
+            </div>
+          </div>
+
+          {form.email_enabled && (
+            <div className="ml-6 space-y-4 p-4 border rounded-lg">
+              <div className="space-y-2">
+                <Label htmlFor="email-recipients">Recipients (comma-separated)</Label>
+                <Textarea
+                  id="email-recipients"
+                  placeholder="admin@company.com, security@company.com"
+                  rows={2}
+                  disabled={!isAdmin}
+                  value={form.email_recipients}
+                  onChange={(e) => set("email_recipients", e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <Separator />
+
+        {/* Slack Notifications */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label className="text-base">Slack Integration</Label>
+              <p className="text-sm text-muted-foreground">Send alerts via an Incoming Webhook</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={!isAdmin || runTest.isPending} onClick={() => runTest.mutate("slack")}>
+                <TestTube2 className="h-3 w-3 mr-1" />
+                Test
+              </Button>
+              <Switch disabled={!isAdmin} checked={form.slack_enabled} onCheckedChange={(v) => set("slack_enabled", v)} />
+            </div>
+          </div>
+
+          {form.slack_enabled && (
+            <div className="ml-6 space-y-4 p-4 border rounded-lg">
+              <div className="space-y-2">
+                <Label htmlFor="slack-webhook">Webhook URL</Label>
+                <Input
+                  id="slack-webhook"
+                  placeholder="https://hooks.slack.com/services/..."
+                  type="password"
+                  disabled={!isAdmin}
+                  value={form.slack_webhook_url ?? ""}
+                  onChange={(e) => set("slack_webhook_url", e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="slack-channel">Channel (informational — set at webhook creation time)</Label>
+                <Input
+                  id="slack-channel"
+                  placeholder="#security-alerts"
+                  disabled={!isAdmin}
+                  value={form.slack_channel ?? ""}
+                  onChange={(e) => set("slack_channel", e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <Separator />
+
+        {/* Webhook Notifications */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label className="text-base flex items-center gap-2">
+                <Webhook className="h-4 w-4" />
+                Custom Webhook
+              </Label>
+              <p className="text-sm text-muted-foreground">POSTs a JSON payload, HMAC-SHA256 signed if a secret is set</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={!isAdmin || runTest.isPending} onClick={() => runTest.mutate("webhook")}>
+                <TestTube2 className="h-3 w-3 mr-1" />
+                Test
+              </Button>
+              <Switch disabled={!isAdmin} checked={form.webhook_enabled} onCheckedChange={(v) => set("webhook_enabled", v)} />
+            </div>
+          </div>
+
+          {form.webhook_enabled && (
+            <div className="ml-6 space-y-4 p-4 border rounded-lg">
+              <div className="space-y-2">
+                <Label htmlFor="webhook-url">Webhook URL</Label>
+                <Input
+                  id="webhook-url"
+                  placeholder="https://api.company.com/alerts"
+                  disabled={!isAdmin}
+                  value={form.webhook_url ?? ""}
+                  onChange={(e) => set("webhook_url", e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="webhook-secret">Secret Key (optional — signs the payload)</Label>
+                <Input
+                  id="webhook-secret"
+                  type="password"
+                  placeholder="webhook_secret_key"
+                  disabled={!isAdmin}
+                  value={form.webhook_secret ?? ""}
+                  onChange={(e) => set("webhook_secret", e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <Separator />
+
+        <div className="space-y-4">
+          <Label className="text-base">Alert Severity Thresholds</Label>
+          <p className="text-sm text-muted-foreground -mt-2">
+            Only these severities trigger delivery. No "low" tier — the model doesn't produce one.
+          </p>
+          <div className="grid grid-cols-3 gap-4 max-w-sm">
+            <div className="space-y-2">
+              <Label className="text-sm text-critical">Critical</Label>
+              <Switch disabled={!isAdmin} checked={form.alert_on_critical} onCheckedChange={(v) => set("alert_on_critical", v)} />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm text-warning">High</Label>
+              <Switch disabled={!isAdmin} checked={form.alert_on_high} onCheckedChange={(v) => set("alert_on_high", v)} />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm text-accent">Medium</Label>
+              <Switch disabled={!isAdmin} checked={form.alert_on_medium} onCheckedChange={(v) => set("alert_on_medium", v)} />
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 export default function Settings() {
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true)
-  const [emailAlertsEnabled, setEmailAlertsEnabled] = useState(true)
-  const [slackEnabled, setSlackEnabled] = useState(false)
-  const [webhookEnabled, setWebhookEnabled] = useState(false)
   const [mfaRequired, setMfaRequired] = useState(false)
   const [autoRetrain, setAutoRetrain] = useState(true)
-
-  const handleSaveSettings = () => {
-    toast({
-      title: "Settings saved",
-      description: "Your configuration has been updated successfully.",
-    })
-  }
-
-  const handleTestSlack = () => {
-    toast({
-      title: "Test message sent",
-      description: "Check your Slack channel for the test notification.",
-    })
-  }
-
-  const handleTestEmail = () => {
-    toast({
-      title: "Test email sent",
-      description: "Check your inbox for the test notification.",
-    })
-  }
-
-  const handleTestWebhook = () => {
-    toast({
-      title: "Webhook tested",
-      description: "Test payload sent to the configured endpoint.",
-    })
-  }
 
   return (
     <div className="space-y-6 p-6">
@@ -55,13 +259,9 @@ export default function Settings() {
           <h1 className="text-3xl font-bold text-foreground">Settings</h1>
           <p className="text-muted-foreground">Configure system preferences and integrations</p>
         </div>
-        <Button onClick={handleSaveSettings} className="flex items-center gap-2">
-          <Save className="h-4 w-4" />
-          Save Changes
-        </Button>
       </div>
 
-      <Tabs defaultValue="general" className="space-y-6">
+      <Tabs defaultValue="notifications" className="space-y-6">
         <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
@@ -71,6 +271,7 @@ export default function Settings() {
         </TabsList>
 
         <TabsContent value="general" className="space-y-6">
+          <DemoDataBadge />
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -92,7 +293,7 @@ export default function Settings() {
                   <Input id="contact-email" type="email" defaultValue="admin@cyberguard.com" />
                 </div>
               </div>
-              
+
               <div className="space-y-2">
                 <Label htmlFor="timezone">Default Timezone</Label>
                 <Select defaultValue="utc">
@@ -145,173 +346,11 @@ export default function Settings() {
         </TabsContent>
 
         <TabsContent value="notifications" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Bell className="h-5 w-5" />
-                Alert Notifications
-              </CardTitle>
-              <CardDescription>
-                Configure how and when you receive threat alerts
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label className="text-base">Enable Notifications</Label>
-                  <p className="text-sm text-muted-foreground">Master toggle for all alert notifications</p>
-                </div>
-                <Switch checked={notificationsEnabled} onCheckedChange={setNotificationsEnabled} />
-              </div>
-
-              <Separator />
-
-              {/* Email Notifications */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label className="text-base flex items-center gap-2">
-                      <Mail className="h-4 w-4" />
-                      Email Alerts
-                    </Label>
-                    <p className="text-sm text-muted-foreground">Send alerts via email</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={handleTestEmail}>
-                      <TestTube2 className="h-3 w-3 mr-1" />
-                      Test
-                    </Button>
-                    <Switch checked={emailAlertsEnabled} onCheckedChange={setEmailAlertsEnabled} />
-                  </div>
-                </div>
-
-                {emailAlertsEnabled && (
-                  <div className="ml-6 space-y-4 p-4 border rounded-lg">
-                    <div className="space-y-2">
-                      <Label htmlFor="smtp-server">SMTP Server</Label>
-                      <Input id="smtp-server" placeholder="smtp.gmail.com" />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="smtp-port">Port</Label>
-                        <Input id="smtp-port" placeholder="587" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="smtp-username">Username</Label>
-                        <Input id="smtp-username" placeholder="alerts@company.com" />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="email-recipients">Recipients</Label>
-                      <Textarea 
-                        id="email-recipients" 
-                        placeholder="admin@company.com, security@company.com"
-                        rows={2}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <Separator />
-
-              {/* Slack Notifications */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label className="text-base">Slack Integration</Label>
-                    <p className="text-sm text-muted-foreground">Send alerts to Slack channels</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={handleTestSlack}>
-                      <TestTube2 className="h-3 w-3 mr-1" />
-                      Test
-                    </Button>
-                    <Switch checked={slackEnabled} onCheckedChange={setSlackEnabled} />
-                  </div>
-                </div>
-
-                {slackEnabled && (
-                  <div className="ml-6 space-y-4 p-4 border rounded-lg">
-                    <div className="space-y-2">
-                      <Label htmlFor="slack-webhook">Webhook URL</Label>
-                      <Input 
-                        id="slack-webhook" 
-                        placeholder="https://hooks.slack.com/services/..." 
-                        type="password"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="slack-channel">Default Channel</Label>
-                      <Input id="slack-channel" placeholder="#security-alerts" />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <Separator />
-
-              {/* Webhook Notifications */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label className="text-base flex items-center gap-2">
-                      <Webhook className="h-4 w-4" />
-                      Custom Webhook
-                    </Label>
-                    <p className="text-sm text-muted-foreground">Send alerts to custom endpoints</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={handleTestWebhook}>
-                      <TestTube2 className="h-3 w-3 mr-1" />
-                      Test
-                    </Button>
-                    <Switch checked={webhookEnabled} onCheckedChange={setWebhookEnabled} />
-                  </div>
-                </div>
-
-                {webhookEnabled && (
-                  <div className="ml-6 space-y-4 p-4 border rounded-lg">
-                    <div className="space-y-2">
-                      <Label htmlFor="webhook-url">Webhook URL</Label>
-                      <Input id="webhook-url" placeholder="https://api.company.com/alerts" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="webhook-secret">Secret Key (Optional)</Label>
-                      <Input id="webhook-secret" type="password" placeholder="webhook_secret_key" />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <Separator />
-
-              <div className="space-y-4">
-                <Label className="text-base">Alert Severity Thresholds</Label>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="space-y-2">
-                    <Label className="text-sm text-critical">Critical</Label>
-                    <Switch defaultChecked />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-sm text-warning">High</Label>
-                    <Switch defaultChecked />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-sm text-accent">Medium</Label>
-                    <Switch />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-sm text-success">Low</Label>
-                    <Switch />
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <NotificationsTab />
         </TabsContent>
 
         <TabsContent value="security" className="space-y-6">
+          <DemoDataBadge />
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -412,6 +451,7 @@ export default function Settings() {
         </TabsContent>
 
         <TabsContent value="models" className="space-y-6">
+          <DemoDataBadge />
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -509,6 +549,7 @@ export default function Settings() {
         </TabsContent>
 
         <TabsContent value="system" className="space-y-6">
+          <DemoDataBadge />
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">

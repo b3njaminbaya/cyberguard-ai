@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { MetricCard } from "@/components/MetricCard"
 import { Users as UsersIcon, UserPlus, Shield, Key, Settings, Search, Filter, MoreHorizontal, Edit, Trash2, UserX } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DemoDataBadge } from "@/components/DemoDataBadge"
 
 const mockUsers = [
   {
@@ -170,6 +171,7 @@ export default function Users() {
         <div>
           <h1 className="text-3xl font-bold text-foreground">User Management</h1>
           <p className="text-muted-foreground">Manage users, roles, and API access</p>
+          <div className="mt-2"><DemoDataBadge /></div>
         </div>
         <div className="flex items-center gap-4">
           <Dialog open={isCreateApiKeyOpen} onOpenChange={setIsCreateApiKeyOpen}>

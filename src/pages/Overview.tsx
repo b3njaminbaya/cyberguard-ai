@@ -1,154 +1,147 @@
 import { MetricCard } from "@/components/MetricCard"
-import { ThreatBadge } from "@/components/ThreatBadge"
+import { ThreatBadge, ThreatLevel } from "@/components/ThreatBadge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { AlertTriangle, Shield, Activity, Brain, Network, Clock } from "lucide-react"
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts'
+import { LoadingState, ErrorState } from "@/components/QueryState"
+import { AlertTriangle, Shield, Activity, Brain, Network } from "lucide-react"
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
+import { useSummary, useThreats, useModelMetrics } from "@/hooks/useApi"
 
-// Mock data for demonstration
-const hourlyAlerts = [
-  { time: '00:00', alerts: 12 },
-  { time: '04:00', alerts: 8 },
-  { time: '08:00', alerts: 25 },
-  { time: '12:00', alerts: 18 },
-  { time: '16:00', alerts: 32 },
-  { time: '20:00', alerts: 15 },
-]
-
-const threatTypes = [
-  { name: 'Malware', value: 35, color: '#ef4444' },
-  { name: 'Phishing', value: 25, color: '#f97316' },
-  { name: 'DDoS', value: 20, color: '#eab308' },
-  { name: 'Intrusion', value: 20, color: '#22c55e' },
-]
-
-const recentAlerts = [
-  { id: 1, time: '2 min ago', message: 'Suspicious network traffic detected from 192.168.1.45', level: 'critical' as const },
-  { id: 2, time: '5 min ago', message: 'Failed login attempts from multiple IPs', level: 'high' as const },
-  { id: 3, time: '8 min ago', message: 'Unusual data transfer pattern detected', level: 'medium' as const },
-  { id: 4, time: '12 min ago', message: 'Port scan activity identified', level: 'high' as const },
-]
+const SEVERITY_COLORS: Record<string, string> = {
+  critical: '#ef4444',
+  high: '#f97316',
+  medium: '#eab308',
+}
 
 export default function Overview() {
+  const summary = useSummary()
+  const threats = useThreats(6)
+  const modelMetrics = useModelMetrics()
+
+  if (summary.isPending || threats.isPending) return <LoadingState label="Loading security overview…" />
+  if (summary.isError) return <ErrorState message={(summary.error as Error).message} />
+
+  const s = summary.data!
+  const severityChartData = Object.entries(s.by_severity)
+    .filter(([, count]) => count > 0)
+    .map(([severity, count]) => ({ severity, count, color: SEVERITY_COLORS[severity] ?? '#94a3b8' }))
+
+  const categoryChartData = Object.entries(s.by_category)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([name, value]) => ({ name, value }))
+
   return (
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Security Overview</h1>
-          <p className="text-muted-foreground">Real-time threat detection and system health monitoring</p>
+          <p className="text-muted-foreground">Live detection results from the trained anomaly-detection model</p>
         </div>
         <div className="flex items-center space-x-2">
           <div className="flex items-center space-x-2 text-sm text-muted-foreground">
             <div className="h-2 w-2 rounded-full bg-success animate-pulse"></div>
-            <span>System Healthy</span>
+            <span>Connected to API</span>
           </div>
         </div>
       </div>
 
-      {/* Key Metrics */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <MetricCard
-          title="Active Threats"
-          value="23"
-          change={{ value: "+15% from last hour", type: "increase" }}
-          icon={AlertTriangle}
-          variant="critical"
-        />
-        <MetricCard
-          title="Protected Assets"
-          value="1,247"
-          change={{ value: "3 new this week", type: "increase" }}
-          icon={Shield}
-          variant="success"
-        />
-        <MetricCard
-          title="Network Activity"
-          value="98.2%"
-          change={{ value: "+2.1% uptime", type: "increase" }}
+          title="Events Ingested"
+          value={s.total_events.toLocaleString()}
           icon={Network}
           variant="default"
         />
         <MetricCard
-          title="AI Models Active"
-          value="4"
-          change={{ value: "All healthy", type: "neutral" }}
+          title="Threats Detected"
+          value={s.total_threats.toLocaleString()}
+          change={{ value: `${s.total_events ? Math.round((s.total_threats / s.total_events) * 100) : 0}% of ingested events`, type: "neutral" }}
+          icon={AlertTriangle}
+          variant="critical"
+        />
+        <MetricCard
+          title="Critical Severity"
+          value={s.by_severity.critical}
+          icon={Shield}
+          variant="warning"
+        />
+        <MetricCard
+          title="Model Accuracy"
+          value={modelMetrics.data?.trained ? `${(modelMetrics.data.accuracy! * 100).toFixed(1)}%` : "—"}
+          change={{ value: "RandomForest on UNSW-NB15", type: "neutral" }}
           icon={Brain}
           variant="default"
         />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Threat Timeline */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Activity className="h-5 w-5 text-primary" />
-              Threats Over Time (24h)
+              Threats by Severity
             </CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={hourlyAlerts}>
+              <BarChart data={severityChartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="time" stroke="hsl(var(--muted-foreground))" />
-                <YAxis stroke="hsl(var(--muted-foreground))" />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: 'hsl(var(--card))', 
+                <XAxis dataKey="severity" stroke="hsl(var(--muted-foreground))" />
+                <YAxis stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'hsl(var(--card))',
                     border: '1px solid hsl(var(--border))',
                     borderRadius: '6px'
-                  }} 
+                  }}
                 />
-                <Line 
-                  type="monotone" 
-                  dataKey="alerts" 
-                  stroke="hsl(var(--primary))" 
-                  strokeWidth={2}
-                  dot={{ fill: 'hsl(var(--primary))', strokeWidth: 2, r: 4 }}
-                />
-              </LineChart>
+                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                  {severityChartData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Bar>
+              </BarChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
 
-        {/* Threat Distribution */}
         <Card>
           <CardHeader>
-            <CardTitle>Threat Categories</CardTitle>
+            <CardTitle>Top Threat Categories</CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
                 <Pie
-                  data={threatTypes}
+                  data={categoryChartData}
                   cx="50%"
                   cy="50%"
                   innerRadius={60}
                   outerRadius={80}
                   dataKey="value"
                 >
-                  {threatTypes.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  {categoryChartData.map((_, index) => (
+                    <Cell key={`cell-${index}`} fill={`hsl(${(index * 57) % 360} 70% 55%)`} />
                   ))}
                 </Pie>
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: 'hsl(var(--card))', 
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'hsl(var(--card))',
                     border: '1px solid hsl(var(--border))',
                     borderRadius: '6px'
-                  }} 
+                  }}
                 />
               </PieChart>
             </ResponsiveContainer>
             <div className="grid grid-cols-2 gap-2 mt-4">
-              {threatTypes.map((type, index) => (
+              {categoryChartData.map((c, index) => (
                 <div key={index} className="flex items-center gap-2 text-sm">
-                  <div 
-                    className="h-3 w-3 rounded-sm" 
-                    style={{ backgroundColor: type.color }}
+                  <div
+                    className="h-3 w-3 rounded-sm"
+                    style={{ backgroundColor: `hsl(${(index * 57) % 360} 70% 55%)` }}
                   />
-                  <span className="text-muted-foreground">{type.name}</span>
-                  <span className="font-medium">{type.value}%</span>
+                  <span className="text-muted-foreground">{c.name}</span>
+                  <span className="font-medium">{c.value}</span>
                 </div>
               ))}
             </div>
@@ -156,31 +149,35 @@ export default function Overview() {
         </Card>
       </div>
 
-      {/* Recent Alerts */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Clock className="h-5 w-5 text-primary" />
-            Recent Alerts
+            <AlertTriangle className="h-5 w-5 text-primary" />
+            Most Recent Threats
           </CardTitle>
-          <Button variant="outline" size="sm">View All</Button>
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {recentAlerts.map((alert) => (
-              <div key={alert.id} className="flex items-center justify-between p-3 rounded-lg border bg-card/50">
+            {threats.data!.map((t) => (
+              <div key={t.id} className="flex items-center justify-between p-3 rounded-lg border bg-card/50">
                 <div className="flex items-start gap-3">
-                  <ThreatBadge level={alert.level} />
+                  <ThreatBadge level={t.severity as ThreatLevel} />
                   <div>
-                    <p className="text-sm font-medium">{alert.message}</p>
-                    <p className="text-xs text-muted-foreground">{alert.time}</p>
+                    <p className="text-sm font-medium">
+                      {t.label} detected — {t.source_ip} → {t.dest_ip} ({t.protocol})
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {new Date(t.created_at).toLocaleString()} · confidence {(t.score * 100).toFixed(0)}%
+                    </p>
                   </div>
                 </div>
-                <Button variant="ghost" size="sm">
-                  Investigate
-                </Button>
               </div>
             ))}
+            {threats.data!.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-6">
+                No threats yet — run <code className="font-mono">python scripts/seed_demo_data.py</code> in backend/.
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>

@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Search, Plus, AlertCircle, Clock, User, MessageSquare } from "lucide-react"
+import { DemoDataBadge } from "@/components/DemoDataBadge"
 
 interface Incident {
   id: string
@@ -153,6 +154,7 @@ export default function Incidents() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Incident Management</h1>
           <p className="text-muted-foreground">Track and manage security incidents</p>
+          <div className="mt-2"><DemoDataBadge /></div>
         </div>
         <Dialog open={newIncidentOpen} onOpenChange={setNewIncidentOpen}>
           <DialogTrigger asChild>
