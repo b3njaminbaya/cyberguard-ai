@@ -6,11 +6,59 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { LoadingState, ErrorState } from "@/components/QueryState"
-import { AlertTriangle, Search, Eye, Clock, Sparkles, Loader2, RotateCw } from "lucide-react"
+import { AlertTriangle, Search, Eye, Clock, Sparkles, Loader2, RotateCw, Gauge } from "lucide-react"
 import { useThreats } from "@/hooks/useApi"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { api, ApiError, type ThreatDto } from "@/lib/api"
 import { toast } from "@/hooks/use-toast"
+
+function deviationLabel(zScore: number): { text: string; className: string } {
+  const abs = Math.abs(zScore)
+  if (abs < 1) return { text: "within normal range", className: "text-muted-foreground" }
+  const direction = zScore > 0 ? "above" : "below"
+  if (abs < 3) return { text: `elevated (${abs.toFixed(1)}× std ${direction} typical)`, className: "text-warning" }
+  return { text: `highly unusual (${abs.toFixed(1)}× std ${direction} typical)`, className: "text-critical" }
+}
+
+function WhyFlagged({ threatId }: { threatId: string }) {
+  const { data, isPending, isError } = useQuery({
+    queryKey: ["threat-explain", threatId],
+    queryFn: () => api.explainThreat(threatId),
+  })
+
+  if (isPending) return <p className="text-xs text-muted-foreground">Loading feature analysis…</p>
+  if (isError || !data || data.length === 0) {
+    return <p className="text-xs text-muted-foreground">No feature-level explanation available for this event.</p>
+  }
+
+  return (
+    <div className="space-y-2">
+      {data.map((item) => {
+        const dev = deviationLabel(item.z_score)
+        const barWidth = Math.min(Math.abs(item.z_score) / 6, 1) * 100
+        return (
+          <div key={item.feature} className="text-sm">
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-xs">{item.feature}</span>
+              <span className={`text-xs ${dev.className}`}>{dev.text}</span>
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full ${Math.abs(item.z_score) >= 3 ? "bg-critical" : Math.abs(item.z_score) >= 1 ? "bg-warning" : "bg-muted-foreground/40"}`}
+                  style={{ width: `${barWidth}%` }}
+                />
+              </div>
+              <span className="text-xs text-muted-foreground w-32 text-right shrink-0">
+                {item.value.toLocaleString()} vs ~{Math.round(item.normal_mean).toLocaleString()} typical
+              </span>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 function formatTimestamp(timestamp: string) {
   const date = new Date(timestamp)
@@ -216,6 +264,18 @@ export default function Threats() {
               {selectedThreat.summary && !triage.isPending && (
                 <p className="text-sm bg-muted/50 rounded-md p-3 whitespace-pre-line">{selectedThreat.summary}</p>
               )}
+            </div>
+
+            <div className="border-t pt-4 space-y-2">
+              <span className="text-sm font-medium flex items-center gap-2">
+                <Gauge className="h-4 w-4 text-primary" />
+                Why Flagged — Feature Analysis
+              </span>
+              <p className="text-xs text-muted-foreground">
+                This event's values on the features the model weighs most, compared against the real mean of
+                Normal-labeled training traffic — not an AI guess, computed directly from the dataset.
+              </p>
+              <WhyFlagged threatId={selectedThreat.id} />
             </div>
           </CardContent>
         </Card>

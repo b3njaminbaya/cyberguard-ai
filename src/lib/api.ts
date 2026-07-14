@@ -58,6 +58,11 @@ export interface SummaryDto {
   by_protocol: Record<string, number>
 }
 
+export interface FeatureImportanceDto {
+  feature: string
+  importance: number
+}
+
 export interface ModelMetricsDto {
   trained: boolean
   trained_at: string | null
@@ -65,6 +70,16 @@ export interface ModelMetricsDto {
   macro_f1: number | null
   weighted_f1: number | null
   per_class: Record<string, { precision: number; recall: number; "f1-score": number; support: number }>
+  feature_importance: FeatureImportanceDto[]
+}
+
+export interface ThreatExplanationDto {
+  feature: string
+  value: number
+  normal_mean: number
+  normal_std: number
+  z_score: number
+  importance: number
 }
 
 export interface MeDto {
@@ -92,6 +107,90 @@ export interface NotificationSettingsDto {
 
 export type NotificationSettingsInput = Omit<NotificationSettingsDto, "id" | "updated_at">
 
+export interface IncidentNoteDto {
+  id: string
+  author_email: string
+  content: string
+  created_at: string
+}
+
+export interface IncidentDto {
+  id: string
+  title: string
+  description: string
+  severity: "critical" | "high" | "medium" | "low"
+  status: "open" | "investigating" | "mitigating" | "resolved" | "closed"
+  assignee_email: string | null
+  created_by_email: string
+  threat_id: string | null
+  created_at: string
+  updated_at: string
+  notes: IncidentNoteDto[]
+}
+
+export interface IncidentInput {
+  title: string
+  description: string
+  severity: IncidentDto["severity"]
+  threat_id?: string | null
+}
+
+export interface UserDto {
+  id: string
+  email: string
+  role: string
+  banned: boolean
+  created_at: string
+}
+
+export interface AppSettingsDto {
+  id: string
+  org_name: string
+  contact_email: string
+  timezone: string
+  log_retention_days: number
+  updated_at: string
+}
+
+export type AppSettingsInput = Omit<AppSettingsDto, "id" | "updated_at">
+
+export interface SystemLogDto {
+  id: string
+  received_at: string
+  source_host: string
+  facility: string
+  severity: string
+  tag: string | null
+  message: string
+  flagged: boolean
+  flag_reason: string | null
+}
+
+export interface LogStatsDto {
+  total_logs: number
+  flagged_logs: number
+  unique_hosts: number
+  by_severity: Record<string, number>
+  by_facility: Record<string, number>
+  listening_port: number
+}
+
+export interface SystemHealthDto {
+  database_connected: boolean
+  model_trained: boolean
+  model_accuracy: number | null
+  model_trained_at: string | null
+  dataset_rows: number | null
+  total_events: number
+  total_threats: number
+  total_incidents: number
+  active_sessions: number
+  uptime_seconds: number
+  ingest_rate_limit: string
+  alert_test_rate_limit: string
+  log_level: string
+}
+
 export const api = {
   threats: (limit = 50) => request<ThreatDto[]>(`/threats?limit=${limit}`),
   events: (limit = 50) => request<EventDto[]>(`/events?limit=${limit}`),
@@ -109,4 +208,34 @@ export const api = {
   testWebhook: () => request<{ status: string }>("/settings/notifications/test/webhook", { method: "POST" }),
   triageThreat: (threatId: string, regenerate = false) =>
     request<ThreatDto>(`/threats/${threatId}/triage${regenerate ? "?regenerate=true" : ""}`, { method: "POST" }),
+  explainThreat: (threatId: string) => request<ThreatExplanationDto[]>(`/threats/${threatId}/explain`),
+  incidents: () => request<IncidentDto[]>("/incidents"),
+  createIncident: (payload: IncidentInput) =>
+    request<IncidentDto>("/incidents", { method: "POST", body: JSON.stringify(payload) }),
+  updateIncident: (id: string, payload: Partial<Pick<IncidentDto, "status" | "assignee_email" | "severity">>) =>
+    request<IncidentDto>(`/incidents/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  addIncidentNote: (id: string, content: string) =>
+    request<IncidentDto>(`/incidents/${id}/notes`, { method: "POST", body: JSON.stringify({ content }) }),
+  users: () => request<UserDto[]>("/users"),
+  updateUserRole: (id: string, role: string) =>
+    request<UserDto>(`/users/${id}/role`, { method: "PATCH", body: JSON.stringify({ role }) }),
+  updateUserBan: (id: string, banned: boolean) =>
+    request<UserDto>(`/users/${id}/ban`, { method: "PATCH", body: JSON.stringify({ banned }) }),
+  generalSettings: () => request<AppSettingsDto>("/settings/general"),
+  saveGeneralSettings: (payload: AppSettingsInput) =>
+    request<AppSettingsDto>("/settings/general", { method: "PUT", body: JSON.stringify(payload) }),
+  retrainModel: () => request<ModelMetricsDto>("/model/retrain", { method: "POST" }),
+  systemHealth: () => request<SystemHealthDto>("/system/health"),
+  logs: (params: { limit?: number; severity?: string; flaggedOnly?: boolean; search?: string } = {}) => {
+    const qs = new URLSearchParams()
+    if (params.limit) qs.set("limit", String(params.limit))
+    if (params.severity) qs.set("severity", params.severity)
+    if (params.flaggedOnly) qs.set("flagged_only", "true")
+    if (params.search) qs.set("search", params.search)
+    return request<SystemLogDto[]>(`/logs?${qs.toString()}`)
+  },
+  logStats: () => request<LogStatsDto>("/logs/stats"),
+  resetNotificationSettings: () => request<{ status: string }>("/settings/notifications/reset", { method: "POST" }),
+  factoryReset: (confirm: string) =>
+    request<{ status: string }>(`/system/factory-reset?confirm=${encodeURIComponent(confirm)}`, { method: "POST" }),
 }

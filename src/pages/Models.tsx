@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { LoadingState, ErrorState } from "@/components/QueryState"
-import { Brain, TrendingUp, Target, AlertTriangle } from "lucide-react"
+import { Brain, TrendingUp, Target, AlertTriangle, Gauge } from "lucide-react"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { useModelMetrics } from "@/hooks/useApi"
 
@@ -68,6 +68,39 @@ export default function Models() {
           <div className="flex justify-between"><span className="text-muted-foreground">Last trained</span><span>{new Date(data.trained_at!).toLocaleString()}</span></div>
         </CardContent>
       </Card>
+
+      {data.feature_importance.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Gauge className="h-5 w-5 text-primary" />
+              What The Model Actually Looks At
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Real `feature_importances_` from the trained RandomForest, aggregated back from 194 one-hot columns to
+              the original 39 fields — not asserted, computed.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={340}>
+              <BarChart
+                data={[...data.feature_importance].reverse()}
+                layout="vertical"
+                margin={{ left: 24 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
+                <XAxis type="number" stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} />
+                <YAxis type="category" dataKey="feature" stroke="hsl(var(--muted-foreground))" width={110} tick={{ fontFamily: "monospace", fontSize: 12 }} />
+                <Tooltip
+                  formatter={(v: number) => `${(v * 100).toFixed(1)}%`}
+                  contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }}
+                />
+                <Bar dataKey="importance" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

@@ -67,11 +67,17 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> Current
 
     user_id = payload["sub"]
     row = db.execute(
-        text('SELECT email, role FROM neon_auth."user" WHERE id = :id'),
+        text('SELECT email, role, banned FROM neon_auth."user" WHERE id = :id'),
         {"id": user_id},
     ).first()
     if row is None:
         raise HTTPException(status_code=401, detail="User not found")
+    if row.banned:
+        # Enforced here rather than relying solely on Neon Auth's own ban
+        # plugin (unconfirmed whether it's active for this project) — a
+        # suspended user's existing, still-valid JWT must stop working
+        # against our API regardless of what Neon Auth itself does with it.
+        raise HTTPException(status_code=403, detail="This account has been suspended")
 
     return CurrentUser(id=user_id, email=row.email, role=row.role)
 

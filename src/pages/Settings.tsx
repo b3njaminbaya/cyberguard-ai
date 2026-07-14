@@ -10,12 +10,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "@/hooks/use-toast"
-import { Settings as SettingsIcon, Bell, Mail, Webhook, Shield, Database, Cpu, TestTube2, AlertTriangle, Lock } from "lucide-react"
-import { DemoDataBadge } from "@/components/DemoDataBadge"
+import {
+  Settings as SettingsIcon, Bell, Mail, Webhook, Shield, Database, Cpu,
+  TestTube2, AlertTriangle, Lock, RotateCw, Activity, Clock,
+} from "lucide-react"
 import { LoadingState, ErrorState } from "@/components/QueryState"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { api, ApiError, type NotificationSettingsInput } from "@/lib/api"
+import { api, ApiError, type NotificationSettingsInput, type AppSettingsInput } from "@/lib/api"
 import { useAuth } from "@/lib/AuthContext"
+import { getRealtimeEnabled, setRealtimeEnabled } from "@/lib/realtimePreference"
 
 function NotificationsTab() {
   const { user } = useAuth()
@@ -248,10 +251,373 @@ function NotificationsTab() {
   )
 }
 
-export default function Settings() {
-  const [mfaRequired, setMfaRequired] = useState(false)
-  const [autoRetrain, setAutoRetrain] = useState(true)
+function GeneralTab() {
+  const { user } = useAuth()
+  const isAdmin = user?.role === "Admin"
+  const queryClient = useQueryClient()
+  const { data, isPending, isError, error } = useQuery({ queryKey: ["general-settings"], queryFn: api.generalSettings })
+  const [form, setForm] = useState<AppSettingsInput | null>(null)
+  const [realtimeOn, setRealtimeOn] = useState(getRealtimeEnabled())
 
+  useEffect(() => {
+    if (data) setForm(data)
+  }, [data])
+
+  const save = useMutation({
+    mutationFn: (payload: AppSettingsInput) => api.saveGeneralSettings(payload),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(["general-settings"], saved)
+      toast({ title: "Settings saved" })
+    },
+    onError: (err: ApiError) => toast({ title: "Save failed", description: err.message, variant: "destructive" }),
+  })
+
+  if (isPending || !form) return <LoadingState label="Loading settings…" />
+  if (isError) return <ErrorState message={(error as Error).message} />
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <SettingsIcon className="h-5 w-5" />
+            Organization Settings
+          </span>
+          <Button size="sm" disabled={!isAdmin || save.isPending} onClick={() => save.mutate(form)}>
+            {save.isPending ? "Saving…" : "Save Changes"}
+          </Button>
+        </CardTitle>
+        <CardDescription>Persisted for real — shared across everyone using this deployment.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-2">
+            <Label htmlFor="org-name">Organization Name</Label>
+            <Input id="org-name" disabled={!isAdmin} value={form.org_name} onChange={(e) => setForm({ ...form, org_name: e.target.value })} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="contact-email">Contact Email</Label>
+            <Input id="contact-email" type="email" disabled={!isAdmin} value={form.contact_email} onChange={(e) => setForm({ ...form, contact_email: e.target.value })} />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="timezone">Default Timezone</Label>
+          <Select disabled={!isAdmin} value={form.timezone} onValueChange={(v) => setForm({ ...form, timezone: v })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="utc">UTC</SelectItem>
+              <SelectItem value="est">Eastern Time</SelectItem>
+              <SelectItem value="pst">Pacific Time</SelectItem>
+              <SelectItem value="cet">Central European Time</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="retention">Log Retention Period</Label>
+          <Select disabled={!isAdmin} value={String(form.log_retention_days)} onValueChange={(v) => setForm({ ...form, log_retention_days: Number(v) })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="30">30 days</SelectItem>
+              <SelectItem value="90">90 days</SelectItem>
+              <SelectItem value="180">180 days</SelectItem>
+              <SelectItem value="365">1 year</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">Informational for now — nothing auto-deletes data past this yet.</p>
+        </div>
+
+        <Separator />
+
+        <div className="flex items-center justify-between">
+          <div className="space-y-0.5">
+            <Label className="text-base">Real-time Updates</Label>
+            <p className="text-sm text-muted-foreground">Poll the dashboard every 15s for new data. Applies immediately, this browser only.</p>
+          </div>
+          <Switch
+            checked={realtimeOn}
+            onCheckedChange={(v) => { setRealtimeOn(v); setRealtimeEnabled(v) }}
+          />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function SecurityTab() {
+  const { data, isPending, isError, error } = useQuery({ queryKey: ["system-health"], queryFn: api.systemHealth })
+
+  if (isPending) return <LoadingState label="Loading security info…" />
+  if (isError) return <ErrorState message={(error as Error).message} />
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Shield className="h-5 w-5" />
+          Security
+        </CardTitle>
+        <CardDescription>What's actually enforced — no editable toggles that wouldn't do anything.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm">Active sessions right now</span>
+            <Badge variant="outline">{data.active_sessions}</Badge>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm">Authentication provider</span>
+            <Badge variant="outline">Neon Auth (Better Auth)</Badge>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm">JWT verification</span>
+            <Badge variant="outline">EdDSA via JWKS, 401 on expiry/tamper</Badge>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm">Account suspension</span>
+            <Badge variant="outline">Enforced — blocks sign-in and rejects live tokens</Badge>
+          </div>
+        </div>
+
+        <Separator />
+
+        <div className="space-y-3">
+          <Label className="text-base">Rate Limiting</Label>
+          <div className="flex items-center justify-between">
+            <span className="text-sm">Event ingestion (<code>/events/ingest</code>)</span>
+            <Badge variant="outline">{data.ingest_rate_limit}</Badge>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm">Alert test endpoints</span>
+            <Badge variant="outline">{data.alert_test_rate_limit}</Badge>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm">Event ingestion auth</span>
+            <Badge variant="outline">Shared API key (X-API-Key), constant-time compare</Badge>
+          </div>
+        </div>
+
+        <Separator />
+
+        <div className="flex items-start gap-2 text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+          <p>
+            Not implemented: multi-factor authentication, configurable session timeout, and password composition
+            rules — these would need a Better Auth plugin we haven't enabled, so we're not showing switches for
+            settings that wouldn't actually do anything.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function ModelsTab() {
+  const { user } = useAuth()
+  const isAdmin = user?.role === "Admin"
+  const queryClient = useQueryClient()
+  const { data, isPending, isError, error } = useQuery({ queryKey: ["model-metrics"], queryFn: api.modelMetrics })
+
+  const retrain = useMutation({
+    mutationFn: api.retrainModel,
+    onSuccess: (metrics) => {
+      queryClient.setQueryData(["model-metrics"], metrics)
+      toast({ title: "Retraining complete", description: `New accuracy: ${(metrics.accuracy! * 100).toFixed(1)}%` })
+    },
+    onError: (err: ApiError) => toast({ title: "Retraining failed", description: err.message, variant: "destructive" }),
+  })
+
+  if (isPending) return <LoadingState label="Loading model info…" />
+  if (isError) return <ErrorState message={(error as Error).message} />
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <Cpu className="h-5 w-5" />
+            AI Model
+          </span>
+          <Button size="sm" disabled={!isAdmin || retrain.isPending} onClick={() => retrain.mutate()}>
+            <RotateCw className={`h-4 w-4 mr-2 ${retrain.isPending ? "animate-spin" : ""}`} />
+            {retrain.isPending ? "Retraining… (~60-90s)" : "Retrain Now"}
+          </Button>
+        </CardTitle>
+        <CardDescription>
+          Retrain actually re-runs the RandomForest on the real UNSW-NB15 dataset and hot-swaps the live model —
+          not a simulated progress bar.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {data.trained ? (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <Label className="text-xs text-muted-foreground">Accuracy</Label>
+                <p className="text-lg font-semibold">{(data.accuracy! * 100).toFixed(1)}%</p>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Weighted F1</Label>
+                <p className="text-lg font-semibold">{(data.weighted_f1! * 100).toFixed(1)}%</p>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Macro F1</Label>
+                <p className="text-lg font-semibold">{(data.macro_f1! * 100).toFixed(1)}%</p>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Last Trained</Label>
+                <p className="text-lg font-semibold">{new Date(data.trained_at!).toLocaleDateString()}</p>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Full per-category breakdown is on the <a href="/models" className="underline">Models</a> page.
+            </p>
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">No model trained yet — click Retrain Now to train the first one.</p>
+        )}
+
+        <Separator />
+
+        <div className="flex items-start gap-2 text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+          <p>
+            Not implemented: automatic retraining on a schedule, configurable hyperparameters, and data-drift
+            monitoring — these need real MLOps infrastructure (a scheduler, a drift-detection pipeline) that's
+            long-term roadmap, not a settings toggle. Retraining today is a real, manually-triggered action.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function SystemTab() {
+  const { user } = useAuth()
+  const isAdmin = user?.role === "Admin"
+  const queryClient = useQueryClient()
+  const { data, isPending, isError, error } = useQuery({ queryKey: ["system-health"], queryFn: api.systemHealth })
+  const [confirmText, setConfirmText] = useState("")
+
+  const resetNotifications = useMutation({
+    mutationFn: api.resetNotificationSettings,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["notification-settings"] })
+      toast({ title: "Notification settings reset to defaults" })
+    },
+    onError: (err: ApiError) => toast({ title: "Reset failed", description: err.message, variant: "destructive" }),
+  })
+
+  const factoryReset = useMutation({
+    mutationFn: (confirm: string) => api.factoryReset(confirm),
+    onSuccess: () => {
+      queryClient.invalidateQueries()
+      setConfirmText("")
+      toast({ title: "Factory reset complete", description: "All ingested events, threats, and incidents were wiped." })
+    },
+    onError: (err: ApiError) => toast({ title: "Reset failed", description: err.message, variant: "destructive" }),
+  })
+
+  if (isPending) return <LoadingState label="Loading system info…" />
+  if (isError) return <ErrorState message={(error as Error).message} />
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Database className="h-5 w-5" />
+          System
+        </CardTitle>
+        <CardDescription>Real health data — no fake CPU/memory sliders for infrastructure we don't control (serverless Postgres, no fixed connection pool to size).</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-success" />
+            <div>
+              <p className="text-xs text-muted-foreground">Database</p>
+              <p className="text-sm font-medium">{data.database_connected ? "Connected" : "Down"}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-primary" />
+            <div>
+              <p className="text-xs text-muted-foreground">Uptime</p>
+              <p className="text-sm font-medium">{Math.floor(data.uptime_seconds / 60)}m {Math.floor(data.uptime_seconds % 60)}s</p>
+            </div>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Log Level</p>
+            <p className="text-sm font-medium">{data.log_level}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Events Ingested</p>
+            <p className="text-sm font-medium">{data.total_events.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Threats Detected</p>
+            <p className="text-sm font-medium">{data.total_threats.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Incidents Tracked</p>
+            <p className="text-sm font-medium">{data.total_incidents.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Training Dataset</p>
+            <p className="text-sm font-medium">{data.dataset_rows?.toLocaleString() ?? "not downloaded"} rows</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Model Accuracy</p>
+            <p className="text-sm font-medium">{data.model_accuracy ? `${(data.model_accuracy * 100).toFixed(1)}%` : "untrained"}</p>
+          </div>
+        </div>
+
+        {isAdmin && (
+          <>
+            <Separator />
+            <div className="p-4 border border-warning/30 rounded-lg bg-warning/5">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-warning mt-0.5" />
+                <div className="flex-1 space-y-3">
+                  <div>
+                    <h4 className="font-medium text-warning">Danger Zone</h4>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      These actions are real and, for Factory Reset, irreversible.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" disabled={resetNotifications.isPending} onClick={() => resetNotifications.mutate()}>
+                      Reset Notification Settings
+                    </Button>
+                  </div>
+                  <div className="flex gap-2 items-center pt-2 border-t">
+                    <Input
+                      placeholder='Type "RESET" to confirm'
+                      value={confirmText}
+                      onChange={(e) => setConfirmText(e.target.value)}
+                      className="max-w-xs"
+                    />
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={confirmText !== "RESET" || factoryReset.isPending}
+                      onClick={() => factoryReset.mutate(confirmText)}
+                    >
+                      Factory Reset (wipe events/threats/incidents)
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+export default function Settings() {
   return (
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
@@ -271,78 +637,7 @@ export default function Settings() {
         </TabsList>
 
         <TabsContent value="general" className="space-y-6">
-          <DemoDataBadge />
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <SettingsIcon className="h-5 w-5" />
-                Organization Settings
-              </CardTitle>
-              <CardDescription>
-                Configure basic organization information and preferences
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <Label htmlFor="org-name">Organization Name</Label>
-                  <Input id="org-name" defaultValue="CyberGuard Security" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="contact-email">Contact Email</Label>
-                  <Input id="contact-email" type="email" defaultValue="admin@cyberguard.com" />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="timezone">Default Timezone</Label>
-                <Select defaultValue="utc">
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="utc">UTC</SelectItem>
-                    <SelectItem value="est">Eastern Time</SelectItem>
-                    <SelectItem value="pst">Pacific Time</SelectItem>
-                    <SelectItem value="cet">Central European Time</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="retention">Log Retention Period</Label>
-                <Select defaultValue="90">
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="30">30 days</SelectItem>
-                    <SelectItem value="90">90 days</SelectItem>
-                    <SelectItem value="180">180 days</SelectItem>
-                    <SelectItem value="365">1 year</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <Separator />
-
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label className="text-base">Dark Mode</Label>
-                  <p className="text-sm text-muted-foreground">Use dark theme across the application</p>
-                </div>
-                <Switch defaultChecked />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label className="text-base">Real-time Updates</Label>
-                  <p className="text-sm text-muted-foreground">Enable live data updates in dashboards</p>
-                </div>
-                <Switch defaultChecked />
-              </div>
-            </CardContent>
-          </Card>
+          <GeneralTab />
         </TabsContent>
 
         <TabsContent value="notifications" className="space-y-6">
@@ -350,308 +645,15 @@ export default function Settings() {
         </TabsContent>
 
         <TabsContent value="security" className="space-y-6">
-          <DemoDataBadge />
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Shield className="h-5 w-5" />
-                Security Settings
-              </CardTitle>
-              <CardDescription>
-                Configure authentication and access control settings
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label className="text-base">Require Multi-Factor Authentication</Label>
-                  <p className="text-sm text-muted-foreground">Enforce MFA for all user accounts</p>
-                </div>
-                <Switch checked={mfaRequired} onCheckedChange={setMfaRequired} />
-              </div>
-
-              <Separator />
-
-              <div className="space-y-4">
-                <Label className="text-base">Session Management</Label>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="session-timeout">Session Timeout (minutes)</Label>
-                    <Select defaultValue="30">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="15">15 minutes</SelectItem>
-                        <SelectItem value="30">30 minutes</SelectItem>
-                        <SelectItem value="60">1 hour</SelectItem>
-                        <SelectItem value="240">4 hours</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="max-sessions">Max Concurrent Sessions</Label>
-                    <Select defaultValue="3">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="1">1 session</SelectItem>
-                        <SelectItem value="3">3 sessions</SelectItem>
-                        <SelectItem value="5">5 sessions</SelectItem>
-                        <SelectItem value="-1">Unlimited</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="space-y-4">
-                <Label className="text-base">Password Policy</Label>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm">Minimum length: 8 characters</span>
-                    <Badge variant="outline">Required</Badge>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm">Require uppercase letters</span>
-                    <Switch defaultChecked />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm">Require numbers</span>
-                    <Switch defaultChecked />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm">Require special characters</span>
-                    <Switch />
-                  </div>
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="space-y-4">
-                <Label className="text-base">API Security</Label>
-                <div className="space-y-2">
-                  <Label htmlFor="api-rate-limit">Rate Limit (requests per minute)</Label>
-                  <Input id="api-rate-limit" defaultValue="1000" type="number" />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label className="text-base">Enable API Key Rotation</Label>
-                    <p className="text-sm text-muted-foreground">Automatically rotate API keys every 90 days</p>
-                  </div>
-                  <Switch />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <SecurityTab />
         </TabsContent>
 
         <TabsContent value="models" className="space-y-6">
-          <DemoDataBadge />
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Cpu className="h-5 w-5" />
-                AI Model Configuration
-              </CardTitle>
-              <CardDescription>
-                Configure AI model settings and training parameters
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label className="text-base">Automatic Model Retraining</Label>
-                  <p className="text-sm text-muted-foreground">Retrain models when performance degrades</p>
-                </div>
-                <Switch checked={autoRetrain} onCheckedChange={setAutoRetrain} />
-              </div>
-
-              <Separator />
-
-              <div className="space-y-4">
-                <Label className="text-base">Training Parameters</Label>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="batch-size">Batch Size</Label>
-                    <Select defaultValue="32">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="16">16</SelectItem>
-                        <SelectItem value="32">32</SelectItem>
-                        <SelectItem value="64">64</SelectItem>
-                        <SelectItem value="128">128</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="learning-rate">Learning Rate</Label>
-                    <Input id="learning-rate" defaultValue="0.001" step="0.0001" type="number" />
-                  </div>
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="space-y-4">
-                <Label className="text-base">Model Performance Thresholds</Label>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm">Minimum Accuracy</span>
-                    <div className="flex items-center gap-2">
-                      <Input className="w-20" defaultValue="0.85" step="0.01" type="number" />
-                      <span className="text-sm text-muted-foreground">85%</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm">Maximum False Positive Rate</span>
-                    <div className="flex items-center gap-2">
-                      <Input className="w-20" defaultValue="0.05" step="0.01" type="number" />
-                      <span className="text-sm text-muted-foreground">5%</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="space-y-4">
-                <Label className="text-base">Data Drift Detection</Label>
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label className="text-base">Enable Drift Monitoring</Label>
-                    <p className="text-sm text-muted-foreground">Monitor for changes in data distribution</p>
-                  </div>
-                  <Switch defaultChecked />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="drift-threshold">Drift Alert Threshold</Label>
-                  <Select defaultValue="0.1">
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="0.05">Low (5%)</SelectItem>
-                      <SelectItem value="0.1">Medium (10%)</SelectItem>
-                      <SelectItem value="0.2">High (20%)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <ModelsTab />
         </TabsContent>
 
         <TabsContent value="system" className="space-y-6">
-          <DemoDataBadge />
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Database className="h-5 w-5" />
-                System Configuration
-              </CardTitle>
-              <CardDescription>
-                Configure system resources and performance settings
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-4">
-                <Label className="text-base">Resource Allocation</Label>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="cpu-limit">CPU Limit (%)</Label>
-                    <Input id="cpu-limit" defaultValue="80" type="number" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="memory-limit">Memory Limit (GB)</Label>
-                    <Input id="memory-limit" defaultValue="16" type="number" />
-                  </div>
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="space-y-4">
-                <Label className="text-base">Database Settings</Label>
-                <div className="space-y-2">
-                  <Label htmlFor="db-pool-size">Connection Pool Size</Label>
-                  <Select defaultValue="20">
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="10">10 connections</SelectItem>
-                      <SelectItem value="20">20 connections</SelectItem>
-                      <SelectItem value="50">50 connections</SelectItem>
-                      <SelectItem value="100">100 connections</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label className="text-base">Enable Query Caching</Label>
-                    <p className="text-sm text-muted-foreground">Cache frequently accessed queries</p>
-                  </div>
-                  <Switch defaultChecked />
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="space-y-4">
-                <Label className="text-base">Monitoring & Logging</Label>
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label className="text-base">Enable Metrics Collection</Label>
-                    <p className="text-sm text-muted-foreground">Collect system performance metrics</p>
-                  </div>
-                  <Switch defaultChecked />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="log-level">System Log Level</Label>
-                  <Select defaultValue="info">
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="debug">Debug</SelectItem>
-                      <SelectItem value="info">Info</SelectItem>
-                      <SelectItem value="warn">Warning</SelectItem>
-                      <SelectItem value="error">Error</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="p-4 border border-warning/30 rounded-lg bg-warning/5">
-                <div className="flex items-start gap-3">
-                  <AlertTriangle className="h-5 w-5 text-warning mt-0.5" />
-                  <div>
-                    <h4 className="font-medium text-warning">Danger Zone</h4>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      These actions are irreversible and can cause data loss.
-                    </p>
-                    <div className="flex gap-2 mt-4">
-                      <Button variant="outline" size="sm">
-                        Reset Configuration
-                      </Button>
-                      <Button variant="destructive" size="sm">
-                        Factory Reset
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <SystemTab />
         </TabsContent>
       </Tabs>
     </div>

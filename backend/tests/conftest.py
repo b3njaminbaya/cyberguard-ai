@@ -8,6 +8,10 @@ os.environ["DATABASE_URL"] = os.environ.get(
 )
 os.environ.setdefault("NEON_AUTH_URL", "https://test.invalid/testdb/auth")
 os.environ.setdefault("INGEST_API_KEY", "test-ingest-key")
+# Port 0 asks the OS for an ephemeral free port — avoids clashing with a real
+# dev server's syslog listener (default 1514) if TestClient ever triggers
+# the app's lifespan (it doesn't today, but this makes that safe either way).
+os.environ.setdefault("SYSLOG_PORT", "0")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -29,7 +33,20 @@ def _create_schema():
                 CREATE TABLE IF NOT EXISTS neon_auth."user" (
                     id UUID PRIMARY KEY,
                     email TEXT NOT NULL,
-                    role TEXT NOT NULL DEFAULT 'user'
+                    role TEXT NOT NULL DEFAULT 'user',
+                    banned BOOLEAN NOT NULL DEFAULT false,
+                    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS neon_auth.session (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    "userId" UUID NOT NULL,
+                    "expiresAt" TIMESTAMPTZ NOT NULL
                 )
                 """
             )
@@ -38,6 +55,7 @@ def _create_schema():
     yield
     Base.metadata.drop_all(bind=engine)
     with engine.begin() as conn:
+        conn.execute(text('DROP TABLE IF EXISTS neon_auth.session'))
         conn.execute(text('DROP TABLE IF EXISTS neon_auth."user"'))
 
 
@@ -46,8 +64,13 @@ def _clean_tables():
     """Truncate everything between tests so they don't see each other's data."""
     yield
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE threats, log_events, notification_settings CASCADE"))
-        conn.execute(text('TRUNCATE neon_auth."user" CASCADE'))
+        conn.execute(
+            text(
+                "TRUNCATE threats, log_events, notification_settings, app_settings, "
+                "incidents, incident_notes, system_logs CASCADE"
+            )
+        )
+        conn.execute(text('TRUNCATE neon_auth."user", neon_auth.session CASCADE'))
 
 
 @pytest.fixture

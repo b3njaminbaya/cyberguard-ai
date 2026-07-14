@@ -1,6 +1,10 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+
+IncidentSeverity = Literal["critical", "high", "medium", "low"]
+IncidentStatus = Literal["open", "investigating", "mitigating", "resolved", "closed"]
 
 
 class MeOut(BaseModel):
@@ -59,6 +63,11 @@ class SummaryOut(BaseModel):
     by_protocol: dict[str, int]
 
 
+class FeatureImportanceItem(BaseModel):
+    feature: str
+    importance: float
+
+
 class ModelMetricsOut(BaseModel):
     trained: bool
     trained_at: str | None = None
@@ -66,6 +75,16 @@ class ModelMetricsOut(BaseModel):
     macro_f1: float | None = None
     weighted_f1: float | None = None
     per_class: dict[str, dict[str, float]] = {}
+    feature_importance: list[FeatureImportanceItem] = []
+
+
+class ThreatExplanationItem(BaseModel):
+    feature: str
+    value: float
+    normal_mean: float
+    normal_std: float
+    z_score: float
+    importance: float
 
 
 class NotificationSettingsIn(BaseModel):
@@ -88,3 +107,116 @@ class NotificationSettingsOut(NotificationSettingsIn):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class IncidentNoteIn(BaseModel):
+    content: str
+
+
+class IncidentNoteOut(BaseModel):
+    id: str
+    author_email: str
+    content: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class IncidentIn(BaseModel):
+    title: str
+    description: str = ""
+    severity: IncidentSeverity
+    threat_id: str | None = None
+
+
+class IncidentUpdate(BaseModel):
+    status: IncidentStatus | None = None
+    assignee_email: str | None = None
+    severity: IncidentSeverity | None = None
+
+
+class IncidentOut(BaseModel):
+    id: str
+    title: str
+    description: str
+    severity: str
+    status: str
+    assignee_email: str | None
+    created_by_email: str
+    threat_id: str | None
+    created_at: datetime
+    updated_at: datetime
+    notes: list[IncidentNoteOut] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserOut(BaseModel):
+    """User record for the admin user-management list."""
+
+    id: str
+    email: str
+    role: str
+    banned: bool
+    created_at: datetime
+
+
+class UserRoleUpdate(BaseModel):
+    role: str
+
+
+class UserBanUpdate(BaseModel):
+    banned: bool
+
+
+class AppSettingsIn(BaseModel):
+    org_name: str = "CyberGuard Security"
+    contact_email: str = ""
+    timezone: str = "utc"
+    log_retention_days: int = 90
+
+
+class AppSettingsOut(AppSettingsIn):
+    id: str
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SystemLogOut(BaseModel):
+    id: str
+    received_at: datetime
+    source_host: str
+    facility: str
+    severity: str
+    tag: str | None
+    message: str
+    flagged: bool
+    flag_reason: str | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LogStatsOut(BaseModel):
+    total_logs: int
+    flagged_logs: int
+    unique_hosts: int
+    by_severity: dict[str, int]
+    by_facility: dict[str, int]
+    listening_port: int
+
+
+class SystemHealthOut(BaseModel):
+    database_connected: bool
+    model_trained: bool
+    model_accuracy: float | None
+    model_trained_at: str | None
+    dataset_rows: int | None
+    total_events: int
+    total_threats: int
+    total_incidents: int
+    active_sessions: int
+    uptime_seconds: float
+    ingest_rate_limit: str
+    alert_test_rate_limit: str
+    log_level: str
