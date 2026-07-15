@@ -18,7 +18,10 @@ import { LoadingState, ErrorState } from "@/components/QueryState"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { api, ApiError, type NotificationSettingsInput, type AppSettingsInput } from "@/lib/api"
 import { useAuth } from "@/lib/AuthContext"
+import { useOrg } from "@/lib/OrgContext"
+import { orgClient } from "@/lib/auth-client"
 import { getRealtimeEnabled, setRealtimeEnabled } from "@/lib/realtimePreference"
+import { Users as UsersIcon, Trash2, FileDown } from "lucide-react"
 
 function NotificationsTab() {
   const { user } = useAuth()
@@ -346,7 +349,32 @@ function GeneralTab() {
 }
 
 function SecurityTab() {
-  const { data, isPending, isError, error } = useQuery({ queryKey: ["system-health"], queryFn: api.systemHealth })
+  const { user } = useAuth()
+  const isAdmin = user?.role === "Admin"
+  const { data, isPending, isError, error } = useQuery({
+    queryKey: ["system-health"],
+    queryFn: api.systemHealth,
+    enabled: isAdmin,
+  })
+
+  if (!isAdmin) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Shield className="h-5 w-5" />
+            Security
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-2 text-sm text-warning bg-warning/10 border border-warning/30 rounded-md px-3 py-2">
+            <Lock className="h-4 w-4 shrink-0" />
+            You're signed in as "{user?.role ?? "unknown"}" — this deployment-wide security view requires the Admin role.
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
 
   if (isPending) return <LoadingState label="Loading security info…" />
   if (isError) return <ErrorState message={(error as Error).message} />
@@ -497,7 +525,11 @@ function SystemTab() {
   const { user } = useAuth()
   const isAdmin = user?.role === "Admin"
   const queryClient = useQueryClient()
-  const { data, isPending, isError, error } = useQuery({ queryKey: ["system-health"], queryFn: api.systemHealth })
+  const { data, isPending, isError, error } = useQuery({
+    queryKey: ["system-health"],
+    queryFn: api.systemHealth,
+    enabled: isAdmin,
+  })
   const [confirmText, setConfirmText] = useState("")
 
   const resetNotifications = useMutation({
@@ -518,6 +550,25 @@ function SystemTab() {
     },
     onError: (err: ApiError) => toast({ title: "Reset failed", description: err.message, variant: "destructive" }),
   })
+
+  if (!isAdmin) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="h-5 w-5" />
+            System
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-2 text-sm text-warning bg-warning/10 border border-warning/30 rounded-md px-3 py-2">
+            <Lock className="h-4 w-4 shrink-0" />
+            You're signed in as "{user?.role ?? "unknown"}" — this deployment-wide system view requires the Admin role.
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
 
   if (isPending) return <LoadingState label="Loading system info…" />
   if (isError) return <ErrorState message={(error as Error).message} />
@@ -617,6 +668,278 @@ function SystemTab() {
   )
 }
 
+function OrganizationTab() {
+  const { user } = useAuth()
+  const { activeOrg } = useOrg()
+  const queryClient = useQueryClient()
+  const [inviteEmail, setInviteEmail] = useState("")
+  const [inviteRole, setInviteRole] = useState<"member" | "admin">("member")
+
+  const { data, isPending, isError, error } = useQuery({
+    queryKey: ["org-members", activeOrg?.id],
+    queryFn: () => orgClient.organization.listMembers({ query: { organizationId: activeOrg!.id } }),
+    enabled: !!activeOrg,
+  })
+
+  const members = data?.data?.members ?? []
+  const myMembership = members.find((m) => m.userId === user?.id)
+  const canManage = myMembership?.role === "owner" || myMembership?.role === "admin"
+
+  const invite = useMutation({
+    mutationFn: () => orgClient.organization.inviteMember({ email: inviteEmail.trim(), role: inviteRole, organizationId: activeOrg!.id }),
+    onSuccess: (res) => {
+      if (res.error) {
+        toast({ title: "Invite failed", description: res.error.message, variant: "destructive" })
+        return
+      }
+      setInviteEmail("")
+      toast({ title: "Invitation sent", description: `${inviteEmail} can now accept an invite to join ${activeOrg?.name}.` })
+    },
+  })
+
+  const removeMember = useMutation({
+    mutationFn: (memberIdOrEmail: string) =>
+      orgClient.organization.removeMember({ memberIdOrEmail, organizationId: activeOrg!.id }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-members", activeOrg?.id] })
+      toast({ title: "Member removed" })
+    },
+  })
+
+  const changeRole = useMutation({
+    mutationFn: ({ memberId, role }: { memberId: string; role: string }) =>
+      orgClient.organization.updateMemberRole({ memberId, role: role as "member" | "admin" | "owner", organizationId: activeOrg!.id }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-members", activeOrg?.id] })
+      toast({ title: "Role updated" })
+    },
+  })
+
+  if (!activeOrg) return <LoadingState label="Loading organization…" />
+  if (isPending) return <LoadingState label="Loading members…" />
+  if (isError) return <ErrorState message={(error as Error).message} />
+
+  return (
+    <div className="space-y-6">
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <UsersIcon className="h-5 w-5" />
+          {activeOrg.name} — Members
+        </CardTitle>
+        <CardDescription>
+          Real Neon Auth organization membership — invites, roles, and removal all call Better Auth's own
+          `organization` plugin directly, not a hand-rolled system.
+        </CardDescription>
+        {!canManage && (
+          <div className="flex items-center gap-2 text-sm text-warning bg-warning/10 border border-warning/30 rounded-md px-3 py-2 mt-2">
+            <Lock className="h-4 w-4 shrink-0" />
+            You're a "{myMembership?.role ?? "member"}" in this organization — only owners/admins can invite or manage members.
+          </div>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="space-y-3">
+          {members.map((m) => (
+            <div key={m.id} className="flex items-center justify-between border-b pb-2 last:border-0">
+              <div>
+                <p className="text-sm font-medium">{m.user?.email}</p>
+                <p className="text-xs text-muted-foreground">{m.role}</p>
+              </div>
+              {canManage && m.userId !== user?.id && (
+                <div className="flex items-center gap-2">
+                  <Select value={m.role} onValueChange={(role) => changeRole.mutate({ memberId: m.id, role })}>
+                    <SelectTrigger className="w-28 h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="member">member</SelectItem>
+                      <SelectItem value="admin">admin</SelectItem>
+                      <SelectItem value="owner">owner</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => removeMember.mutate(m.id)}>
+                    <Trash2 className="h-4 w-4 text-critical" />
+                  </Button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {canManage && (
+          <>
+            <Separator />
+            <div className="space-y-2">
+              <Label className="text-base">Invite a member</Label>
+              <div className="flex gap-2">
+                <Input placeholder="teammate@example.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} className="flex-1" />
+                <Select value={inviteRole} onValueChange={(v) => setInviteRole(v as "member" | "admin")}>
+                  <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="member">member</SelectItem>
+                    <SelectItem value="admin">admin</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button disabled={!inviteEmail.trim() || invite.isPending} onClick={() => invite.mutate()}>
+                  {invite.isPending ? "Sending…" : "Invite"}
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+
+    <ApiKeysCard canManage={canManage} />
+    <ComplianceExportCard canManage={canManage} />
+    </div>
+  )
+}
+
+function ApiKeysCard({ canManage }: { canManage: boolean }) {
+  const queryClient = useQueryClient()
+  const [newKeyName, setNewKeyName] = useState("")
+  const [revealedSecret, setRevealedSecret] = useState<string | null>(null)
+
+  const { data, isPending, isError, error } = useQuery({ queryKey: ["api-keys"], queryFn: api.apiKeys })
+
+  const create = useMutation({
+    mutationFn: (name: string) => api.createApiKey(name),
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: ["api-keys"] })
+      setNewKeyName("")
+      setRevealedSecret(created.secret)
+    },
+    onError: (err: ApiError) => toast({ title: "Couldn't create key", description: err.message, variant: "destructive" }),
+  })
+
+  const revoke = useMutation({
+    mutationFn: (id: string) => api.revokeApiKey(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["api-keys"] })
+      toast({ title: "Key revoked" })
+    },
+  })
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Webhook className="h-5 w-5" />
+          API Keys
+        </CardTitle>
+        <CardDescription>
+          Per-organization keys for <code className="text-xs">POST /events/ingest</code> — only a SHA-256 hash is
+          stored server-side; the raw key is shown once, at creation. Full endpoint docs at{" "}
+          <a href={`${import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000"}/docs`} target="_blank" rel="noreferrer" className="underline">
+            /docs
+          </a>.
+        </CardDescription>
+        {!canManage && (
+          <div className="flex items-center gap-2 text-sm text-warning bg-warning/10 border border-warning/30 rounded-md px-3 py-2 mt-2">
+            <Lock className="h-4 w-4 shrink-0" />
+            Only owners/admins can create or revoke API keys.
+          </div>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {revealedSecret && (
+          <div className="space-y-2 border border-warning/40 bg-warning/10 rounded-md p-3">
+            <p className="text-sm font-medium">Copy this key now — it won't be shown again.</p>
+            <code className="block text-xs bg-muted p-2 rounded break-all">{revealedSecret}</code>
+            <Button size="sm" variant="outline" onClick={() => setRevealedSecret(null)}>Done</Button>
+          </div>
+        )}
+
+        {isPending ? (
+          <LoadingState label="Loading API keys…" />
+        ) : isError ? (
+          <ErrorState message={(error as Error).message} />
+        ) : (
+          <div className="space-y-3">
+            {data.length === 0 && <p className="text-sm text-muted-foreground">No API keys yet.</p>}
+            {data.map((k) => (
+              <div key={k.id} className="flex items-center justify-between border-b pb-2 last:border-0">
+                <div>
+                  <p className="text-sm font-medium">{k.name}</p>
+                  <p className="text-xs text-muted-foreground font-mono">{k.key_prefix}… · created by {k.created_by_email}</p>
+                </div>
+                {k.revoked ? (
+                  <Badge variant="outline" className="text-xs">revoked</Badge>
+                ) : canManage ? (
+                  <Button variant="ghost" size="sm" onClick={() => revoke.mutate(k.id)}>
+                    <Trash2 className="h-4 w-4 text-critical" />
+                  </Button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {canManage && (
+          <>
+            <Separator />
+            <div className="flex gap-2">
+              <Input placeholder="Key name, e.g. prod-ingest" value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} className="flex-1" />
+              <Button disabled={!newKeyName.trim() || create.isPending} onClick={() => create.mutate(newKeyName.trim())}>
+                {create.isPending ? "Creating…" : "Create Key"}
+              </Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function ComplianceExportCard({ canManage }: { canManage: boolean }) {
+  const today = new Date().toISOString().slice(0, 10)
+  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const [start, setStart] = useState(ninetyDaysAgo)
+  const [end, setEnd] = useState(today)
+
+  const exportMutation = useMutation({
+    mutationFn: () => api.exportCompliance(start, end),
+    onSuccess: () => toast({ title: "Export downloaded", description: "A ZIP of incidents, threats, and the audit log for this range." }),
+    onError: (err: ApiError) => toast({ title: "Export failed", description: err.message, variant: "destructive" }),
+  })
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <FileDown className="h-5 w-5" />
+          Compliance Evidence Export
+        </CardTitle>
+        <CardDescription>
+          A real ZIP of this organization's incidents (with notes), detected threats, and audit log for the range
+          below — CSV files, not a fabricated compliance badge.
+        </CardDescription>
+        {!canManage && (
+          <div className="flex items-center gap-2 text-sm text-warning bg-warning/10 border border-warning/30 rounded-md px-3 py-2 mt-2">
+            <Lock className="h-4 w-4 shrink-0" />
+            Only owners/admins can export compliance evidence.
+          </div>
+        )}
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="space-y-1">
+            <Label htmlFor="export-start">From</Label>
+            <Input id="export-start" type="date" value={start} onChange={(e) => setStart(e.target.value)} disabled={!canManage} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="export-end">To</Label>
+            <Input id="export-end" type="date" value={end} onChange={(e) => setEnd(e.target.value)} disabled={!canManage} />
+          </div>
+          <Button disabled={!canManage || exportMutation.isPending} onClick={() => exportMutation.mutate()}>
+            {exportMutation.isPending ? "Exporting…" : "Download Export"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function Settings() {
   return (
     <div className="space-y-6 p-6">
@@ -628,13 +951,18 @@ export default function Settings() {
       </div>
 
       <Tabs defaultValue="notifications" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
+          <TabsTrigger value="organization">Organization</TabsTrigger>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="models">AI Models</TabsTrigger>
           <TabsTrigger value="system">System</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="organization" className="space-y-6">
+          <OrganizationTab />
+        </TabsContent>
 
         <TabsContent value="general" className="space-y-6">
           <GeneralTab />

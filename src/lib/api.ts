@@ -1,4 +1,5 @@
 import { getAccessToken } from "@/lib/auth-client"
+import { getActiveOrgId } from "@/lib/activeOrg"
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000"
 
@@ -10,10 +11,12 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await getAccessToken()
+  const orgId = getActiveOrgId()
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(orgId ? { "X-Organization-Id": orgId } : {}),
       ...(init.body ? { "Content-Type": "application/json" } : {}),
       ...init.headers,
     },
@@ -24,6 +27,36 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
+}
+
+/** Triggers a real browser download — the export endpoint returns a binary
+ * ZIP, not JSON, so it can't go through request<T>(). */
+async function downloadFile(path: string, filenameFallback: string): Promise<void> {
+  const token = await getAccessToken()
+  const orgId = getActiveOrgId()
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(orgId ? { "X-Organization-Id": orgId } : {}),
+    },
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new ApiError(res.status, body?.detail ?? `${path} failed: ${res.status} ${res.statusText}`)
+  }
+  const disposition = res.headers.get("content-disposition") ?? ""
+  const match = disposition.match(/filename="?([^"]+)"?/)
+  const filename = match?.[1] ?? filenameFallback
+
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
 
 export interface ThreatDto {
@@ -175,6 +208,20 @@ export interface LogStatsDto {
   listening_port: number
 }
 
+export interface ApiKeyDto {
+  id: string
+  name: string
+  key_prefix: string
+  created_by_email: string
+  created_at: string
+  last_used_at: string | null
+  revoked: boolean
+}
+
+export interface ApiKeyCreatedDto extends ApiKeyDto {
+  secret: string
+}
+
 export interface SystemHealthDto {
   database_connected: boolean
   model_trained: boolean
@@ -209,6 +256,14 @@ export const api = {
   triageThreat: (threatId: string, regenerate = false) =>
     request<ThreatDto>(`/threats/${threatId}/triage${regenerate ? "?regenerate=true" : ""}`, { method: "POST" }),
   explainThreat: (threatId: string) => request<ThreatExplanationDto[]>(`/threats/${threatId}/explain`),
+  apiKeys: () => request<ApiKeyDto[]>("/api-keys"),
+  createApiKey: (name: string) =>
+    request<ApiKeyCreatedDto>("/api-keys", { method: "POST", body: JSON.stringify({ name }) }),
+  revokeApiKey: (id: string) => request<{ status: string }>(`/api-keys/${id}`, { method: "DELETE" }),
+  exportCompliance: (start: string, end: string) => {
+    const qs = new URLSearchParams({ start, end })
+    return downloadFile(`/compliance/export?${qs.toString()}`, `cyberguard-compliance-export.zip`)
+  },
   incidents: () => request<IncidentDto[]>("/incidents"),
   createIncident: (payload: IncidentInput) =>
     request<IncidentDto>("/incidents", { method: "POST", body: JSON.stringify(payload) }),

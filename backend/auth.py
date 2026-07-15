@@ -1,3 +1,4 @@
+import hashlib
 import hmac
 import os
 import time
@@ -82,15 +83,39 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> Current
     return CurrentUser(id=user_id, email=row.email, role=row.role)
 
 
-def require_ingest_key(request: Request) -> None:
-    if not INGEST_API_KEY:
-        raise HTTPException(
-            status_code=503,
-            detail="INGEST_API_KEY not configured on the backend — ingestion is disabled until it is set.",
-        )
+def require_ingest_key(request: Request, db: Session = Depends(get_db)) -> str:
+    """Authenticates POST /events/ingest and resolves which organization the
+    ingested event belongs to. Real per-org keys (backend/scripts or the
+    Settings > Organization > API Keys UI, hashed at rest — see models.ApiKey)
+    take priority; INGEST_API_KEY is kept only as a legacy single shared key
+    for whoever set one up before per-org keys existed, and always resolves
+    to the bootstrap default org."""
     provided = request.headers.get("x-api-key", "")
-    if not hmac.compare_digest(provided, INGEST_API_KEY):
-        raise HTTPException(status_code=401, detail="Missing or invalid X-API-Key")
+    if not provided:
+        raise HTTPException(status_code=401, detail="Missing X-API-Key")
+
+    key_hash = hashlib.sha256(provided.encode()).hexdigest()
+    row = db.execute(
+        text("SELECT organization_id, revoked FROM api_keys WHERE key_hash = :h"),
+        {"h": key_hash},
+    ).first()
+    if row is not None:
+        if row.revoked:
+            raise HTTPException(status_code=401, detail="This API key has been revoked")
+        db.execute(text("UPDATE api_keys SET last_used_at = now() WHERE key_hash = :h"), {"h": key_hash})
+        db.commit()
+        return str(row.organization_id)
+
+    if INGEST_API_KEY and hmac.compare_digest(provided, INGEST_API_KEY):
+        org_row = db.execute(text("SELECT id FROM neon_auth.organization WHERE slug = 'default'")).first()
+        if org_row is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No default organization provisioned — run `python scripts/migrate_to_organizations.py`.",
+            )
+        return str(org_row.id)
+
+    raise HTTPException(status_code=401, detail="Invalid X-API-Key")
 
 
 def require_role(*roles: str):
@@ -98,5 +123,46 @@ def require_role(*roles: str):
         if user.role not in roles:
             raise HTTPException(status_code=403, detail="Insufficient permissions")
         return user
+
+    return dependency
+
+
+class OrgMember:
+    """The caller's identity plus which organization they're acting in and
+    their role within it. Org membership lives in Neon Auth's own tables
+    (neon_auth.member, provisioned by Better Auth's real `organization`
+    plugin) — we only read it here, all writes (create org, invite, accept,
+    setActive) happen client-side through the real Better Auth client."""
+
+    def __init__(self, user: CurrentUser, org_id: str, org_role: str):
+        self.user = user
+        self.org_id = org_id
+        self.org_role = org_role
+
+
+def require_org_member(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> OrgMember:
+    org_id = request.headers.get("x-organization-id")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Missing X-Organization-Id header")
+
+    row = db.execute(
+        text('SELECT role FROM neon_auth.member WHERE "organizationId" = :org_id AND "userId" = :user_id'),
+        {"org_id": org_id, "user_id": user.id},
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=403, detail="Not a member of this organization")
+
+    return OrgMember(user=user, org_id=org_id, org_role=row.role)
+
+
+def require_org_role(*org_roles: str):
+    def dependency(member: OrgMember = Depends(require_org_member)) -> OrgMember:
+        if member.org_role not in org_roles:
+            raise HTTPException(status_code=403, detail="Insufficient permissions within this organization")
+        return member
 
     return dependency

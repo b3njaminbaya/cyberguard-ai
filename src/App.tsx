@@ -6,7 +6,10 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { AuthProvider, useAuth } from "@/lib/AuthContext";
+import { OrgProvider } from "@/lib/OrgContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { RequireOrganization } from "@/components/RequireOrganization";
+import { OrgSwitcher } from "@/components/OrgSwitcher";
 import { Button } from "@/components/ui/button";
 import { LogOut } from "lucide-react";
 import Login from "./pages/Login";
@@ -41,8 +44,9 @@ function Dashboard() {
       <div className="min-h-screen flex w-full bg-gradient-matrix">
         <AppSidebar />
         <div className="flex-1 flex flex-col">
-          <header className="h-14 border-b border-border/50 backdrop-blur-sm bg-background/50 flex items-center px-4">
-            <SidebarTrigger className="mr-4" />
+          <header className="h-14 border-b border-border/50 backdrop-blur-sm bg-background/50 flex items-center px-4 gap-4">
+            <SidebarTrigger />
+            <OrgSwitcher />
             <div className="flex items-center gap-2">
               <div className="h-2 w-2 rounded-full bg-success animate-pulse"></div>
               <span className="text-sm text-muted-foreground">All systems operational</span>
@@ -82,7 +86,11 @@ const App = () => (
               path="/*"
               element={
                 <ProtectedRoute>
-                  <Dashboard />
+                  <OrgProvider>
+                    <RequireOrganization>
+                      <Dashboard />
+                    </RequireOrganization>
+                  </OrgProvider>
                 </ProtectedRoute>
               }
             />

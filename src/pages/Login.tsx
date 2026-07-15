@@ -8,13 +8,14 @@ import { Shield, AlertTriangle } from "lucide-react"
 import { useAuth } from "@/lib/AuthContext"
 
 export default function Login() {
-  const { signIn, signUp } = useAuth()
+  const { signIn, signUp, signInWithGoogle } = useAuth()
   const navigate = useNavigate()
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [googleSubmitting, setGoogleSubmitting] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -27,6 +28,16 @@ export default function Login() {
       return
     }
     navigate("/")
+  }
+
+  const handleGoogle = async () => {
+    setGoogleSubmitting(true)
+    setError(null)
+    const { error } = await signInWithGoogle()
+    // On success this redirects the whole page to Google — there's no
+    // "then" to navigate() from. Only reachable on failure.
+    setGoogleSubmitting(false)
+    if (error) setError(error)
   }
 
   return (
@@ -61,6 +72,17 @@ export default function Login() {
               {submitting ? "Please wait…" : mode === "sign-in" ? "Sign In" : "Create Account"}
             </Button>
           </form>
+
+          <div className="flex items-center gap-2 my-4">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-xs text-muted-foreground">or</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
+          <Button type="button" variant="outline" className="w-full" disabled={googleSubmitting} onClick={handleGoogle}>
+            {googleSubmitting ? "Redirecting…" : "Continue with Google"}
+          </Button>
+
           <button
             type="button"
             className="mt-4 text-sm text-muted-foreground hover:text-foreground w-full text-center"

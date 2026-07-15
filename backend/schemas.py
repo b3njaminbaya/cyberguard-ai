@@ -206,6 +206,29 @@ class LogStatsOut(BaseModel):
     listening_port: int
 
 
+class ApiKeyIn(BaseModel):
+    name: str
+
+
+class ApiKeyOut(BaseModel):
+    id: str
+    name: str
+    key_prefix: str
+    created_by_email: str
+    created_at: datetime
+    last_used_at: datetime | None
+    revoked: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ApiKeyCreatedOut(ApiKeyOut):
+    """Returned only once, at creation — the raw secret is never retrievable
+    again, only its hash is stored."""
+
+    secret: str
+
+
 class SystemHealthOut(BaseModel):
     database_connected: bool
     model_trained: bool

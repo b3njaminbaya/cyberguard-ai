@@ -120,18 +120,21 @@ def test_notification_settings_readable_by_any_authed_user(authed_client):
     assert resp.status_code == 200
 
 
-def test_non_admin_cannot_read_slack_webhook_or_signing_secret(client, admin_user, regular_user, db_session):
+def test_non_admin_cannot_read_slack_webhook_or_signing_secret(
+    client, admin_org_member, regular_org_member, db_session
+):
     from sqlalchemy import text
 
-    from auth import get_current_user
+    from auth import get_current_user, require_org_member
     from main import app
 
     # admin_client/authed_client both mutate the same global
-    # app.dependency_overrides[get_current_user] entry — requesting both in
-    # one test is a footgun (whichever fixture sets up last silently wins for
-    # both). Switch the override explicitly instead so each request's
-    # identity is unambiguous.
-    app.dependency_overrides[get_current_user] = lambda: admin_user
+    # app.dependency_overrides entries — requesting both in one test is a
+    # footgun (whichever fixture sets up last silently wins for both).
+    # Switch the overrides explicitly instead so each request's identity —
+    # both site role and org role — is unambiguous.
+    app.dependency_overrides[get_current_user] = lambda: admin_org_member.user
+    app.dependency_overrides[require_org_member] = lambda: admin_org_member
     client.put(
         "/settings/notifications",
         json={
@@ -153,7 +156,8 @@ def test_non_admin_cannot_read_slack_webhook_or_signing_secret(client, admin_use
     assert admin_view["slack_webhook_url"] == "https://hooks.slack.example/super-secret-path"
     assert admin_view["webhook_secret"] == "top-secret-hmac-key"
 
-    app.dependency_overrides[get_current_user] = lambda: regular_user
+    app.dependency_overrides[get_current_user] = lambda: regular_org_member.user
+    app.dependency_overrides[require_org_member] = lambda: regular_org_member
     non_admin_view = client.get("/settings/notifications").json()
     assert non_admin_view["slack_webhook_url"] is None
     assert non_admin_view["webhook_secret"] is None
@@ -167,6 +171,7 @@ def test_non_admin_cannot_read_slack_webhook_or_signing_secret(client, admin_use
     assert row.webhook_secret == "top-secret-hmac-key"
 
     app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(require_org_member, None)
 
 
 def test_notification_settings_not_editable_by_regular_user(authed_client):
@@ -190,8 +195,10 @@ def test_notification_settings_not_editable_by_regular_user(authed_client):
     assert resp.status_code == 403
 
 
-def test_settings_update_is_audit_logged(admin_client, caplog):
+def test_settings_update_is_audit_logged(admin_client, admin_org_member, caplog, db_session):
     import logging
+
+    from models import AuditLog
 
     with caplog.at_level(logging.INFO, logger="cyberguard.audit"):
         admin_client.put(
@@ -211,7 +218,13 @@ def test_settings_update_is_audit_logged(admin_client, caplog):
                 "alert_on_medium": False,
             },
         )
-    assert any("notification_settings updated" in r.message and "admin@test.local" in r.message for r in caplog.records)
+    assert any("settings.notifications.updated" in r.message and "admin@test.local" in r.message for r in caplog.records)
+
+    # also persisted to the queryable audit_log table (backs compliance export)
+    row = db_session.query(AuditLog).filter(AuditLog.action == "settings.notifications.updated").first()
+    assert row is not None
+    assert row.actor_email == "admin@test.local"
+    assert row.organization_id == admin_org_member.org_id
 
 
 def test_notification_settings_editable_by_admin(admin_client):

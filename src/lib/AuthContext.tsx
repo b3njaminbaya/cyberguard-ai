@@ -13,6 +13,7 @@ interface AuthContextValue {
   isLoading: boolean
   signIn: (email: string, password: string) => Promise<{ error: string | null }>
   signUp: (email: string, password: string) => Promise<{ error: string | null }>
+  signInWithGoogle: () => Promise<{ error: string | null }>
   signOut: () => Promise<void>
 }
 
@@ -64,13 +65,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: error?.message ?? null }
   }
 
+  // Real Google OAuth via Better Auth's signIn.social — Neon Auth provides
+  // a shared, pre-configured Google client for every project (verified live
+  // against the actual auth server: a real redirect to accounts.google.com
+  // with a working client_id, no client-side setup needed). Only Google is
+  // enabled on this project — GitHub/Microsoft return PROVIDER_NOT_SUPPORTED,
+  // and Better Auth's own client hard-codes signInWithSSO to always fail
+  // ("does not support enterprise SAML SSO"), confirmed by reading the SDK
+  // source, not assumed from its types. Redirects the whole page; the
+  // existing onAuthStateChange listener above picks up the session on return.
+  const signInWithGoogle = async () => {
+    const { error } = await authClient.signInWithOAuth({ provider: "google" })
+    return { error: error?.message ?? null }
+  }
+
   const signOut = async () => {
     await authClient.signOut()
     setUser(null)
   }
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, isLoading, signIn, signUp, signInWithGoogle, signOut }}>
       {children}
     </AuthContext.Provider>
   )

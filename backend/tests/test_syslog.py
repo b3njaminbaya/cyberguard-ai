@@ -142,8 +142,12 @@ def test_real_udp_packet_is_parsed_and_persisted(db_session):
 # API endpoints
 # ---------------------------------------------------------------------------
 
+DEFAULT_ORG_ID = "00000000-0000-0000-0000-0000000000f1"  # matches conftest.default_org
+
+
 def _seed_log(db_session, **overrides):
     defaults = dict(
+        organization_id=DEFAULT_ORG_ID,
         source_host="web-01",
         facility="auth",
         severity="err",

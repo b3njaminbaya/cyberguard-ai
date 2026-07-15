@@ -59,18 +59,22 @@ def test_system_health_requires_auth(client):
     assert client.get("/system/health").status_code == 401
 
 
-def test_system_health_reports_real_counts(authed_client, mocker):
+def test_system_health_reports_real_counts(admin_client, mocker):
+    # /system/health is deployment-wide, not org-scoped, and now requires the
+    # site-wide Admin role (previously any authenticated user could read
+    # aggregate counts across every organization — a real cross-org leak
+    # once multi-tenancy landed).
     mocker.patch(
         "main.score_event",
         return_value={"is_threat": True, "label": "DoS", "score": 0.5, "severity": "critical"},
     )
     mocker.patch("notifications.send_slack")
-    authed_client.post(
+    admin_client.post(
         "/events/ingest",
         json={"source_ip": "1.1.1.1", "dest_ip": "2.2.2.2", "protocol": "tcp", "bytes": 1, "features": {}},
         headers={"X-API-Key": "test-ingest-key"},
     )
-    resp = authed_client.get("/system/health")
+    resp = admin_client.get("/system/health")
     assert resp.status_code == 200
     body = resp.json()
     assert body["total_events"] == 1

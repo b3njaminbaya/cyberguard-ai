@@ -46,7 +46,10 @@ def test_valid_token_reaches_protected_endpoint(client, mocker, keypair, db_sess
     use_test_key(mocker, public_key)
     token = make_token(private_key, sub=user_id)
 
-    resp = client.get("/threats", headers={"Authorization": f"Bearer {token}"})
+    # /users/me only needs a valid JWT (get_current_user), not org
+    # membership — org-scoped authorization is covered separately in
+    # test_organizations.py, and mixing the two here would test both at once.
+    resp = client.get("/users/me", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
 
 
